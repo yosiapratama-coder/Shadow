@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Shadow Hunt — Stealth Arena</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#070a0d;color:#fff;font-family:Arial,sans-serif}
+body{display:flex;align-items:center;justify-content:center}
+#wrap{position:relative;width:100vw;height:100vh;max-width:1200px;max-height:800px;background:#111;overflow:hidden}
+canvas{width:100%;height:100%;display:block;touch-action:none}
+.hud{position:absolute;top:0;left:0;right:0;padding:14px;display:flex;gap:10px;justify-content:space-between;pointer-events:none}
+.box{background:rgba(8,12,16,.82);border:1px solid #26323c;border-radius:12px;padding:9px 12px;font-weight:700;box-shadow:0 5px 20px #0008}
+#stats{display:flex;gap:8px;flex-wrap:wrap}.bar{width:130px;height:9px;background:#26313a;border-radius:8px;overflow:hidden;margin-top:5px}.hp{height:100%;background:#e33}
+#overlay{position:absolute;inset:0;background:rgba(4,7,9,.82);display:flex;align-items:center;justify-content:center;text-align:center}
+.panel{width:min(92%,520px);padding:32px;border:1px solid #35434f;border-radius:22px;background:#0e1419;box-shadow:0 20px 80px #000}
+h1{margin:0 0 10px;font-size:42px;letter-spacing:3px}p{color:#aab6bf;line-height:1.5}
+button{border:0;border-radius:12px;padding:13px 22px;background:#d7ff4f;color:#101500;font-weight:900;font-size:16px;cursor:pointer}
+button:hover{filter:brightness(1.08)}
+#touch{position:absolute;inset:0;pointer-events:none}
+.pad{position:absolute;bottom:25px;left:25px;width:150px;height:150px;pointer-events:auto}
+.touchbtn{position:absolute;width:54px;height:54px;border-radius:50%;background:#ffffff18;border:1px solid #ffffff35;color:white;display:flex;align-items:center;justify-content:center;font-weight:900;user-select:none}
+#up{left:48px;top:0}#down{left:48px;bottom:0}#left{left:0;top:48px}#right{right:0;top:48px}
+#hint{position:absolute;bottom:16px;right:18px;color:#9aa7b1;font-size:12px;background:#0007;padding:7px 10px;border-radius:8px}
+@media(max-width:650px){h1{font-size:30px}.hud{font-size:12px}.box{padding:7px 9px}.bar{width:90px}#hint{display:none}}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="game"></canvas>
+<div class="hud">
+  <div id="stats">
+    <div class="box">LEVEL <span id="level">1</span></div>
+    <div class="box">SCORE <span id="score">0</span></div>
+    <div class="box">COINS <span id="coins">0</span></div>
+  </div>
+  <div class="box">HP <span id="hpText">100</span><div class="bar"><div id="hpbar" class="hp"></div></div></div>
+</div>
+<div id="hint">WASD / Arrow Keys = bergerak · Shift = dash · Hindari cone musuh</div>
+<div id="touch">
+  <div class="pad">
+    <div id="up" class="touchbtn">▲</div><div id="down" class="touchbtn">▼</div>
+    <div id="left" class="touchbtn">◀</div><div id="right" class="touchbtn">▶</div>
+  </div>
+</div>
+<div id="overlay">
+  <div class="panel">
+    <h1>SHADOW HUNT</h1>
+    <p>Stealth arena original. Masuk dari bayangan, kalahkan penjaga dari belakang, kumpulkan koin, dan buka level berikutnya.</p>
+    <p><b>Desktop:</b> WASD / Arrow Keys &nbsp; <b>Dash:</b> Shift</p>
+    <p><b>Mobile:</b> gunakan tombol arah di kiri bawah.</p>
+    <button id="start">MULAI GAME</button>
+  </div>
+</div>
+</div>
+<script>
+const c=document.getElementById('game'),ctx=c.getContext('2d');
+let W,H,scale=1;
+function resize(){W=c.width=innerWidth*devicePixelRatio;H=c.height=innerHeight*devicePixelRatio;ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);W=innerWidth;H=innerHeight}
+addEventListener('resize',resize);resize();
+
+const keys={}; addEventListener('keydown',e=>{keys[e.key.toLowerCase()]=true;if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(e.key.toLowerCase()))e.preventDefault()});
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+
+let level=1,score=0,coins=0,hp=100,running=false,won=false;
+let player,guards=[],walls=[],loot=[],particles=[],last=0,flash=0;
+
+function rnd(a,b){return a+Math.random()*(b-a)}
+function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
+function resetLevel(){
+ player={x:W*.5,y:H*.82,r:15,speed:185,angle:-Math.PI/2,inv:0,dash:0};
+ guards=[];walls=[];loot=[];particles=[];hp=100;
+ const margin=70;
+ // walls
+ for(let i=0;i<7+level;i++){
+   let x=rnd(margin,W-margin-130),y=rnd(100,H-margin-100),w=rnd(70,160),h=rnd(12,20);
+   if(Math.abs(x-W*.5)<170 && y>H*.55) {i--;continue}
+   walls.push({x,y,w,h});
+ }
+ // guards
+ for(let i=0;i<4+level*2;i++){
+   let g={x:rnd(80,W-80),y:rnd(130,H-80),r:14,speed:rnd(42,58)+level*3,dir:rnd(0,Math.PI*2),turn:rnd(.7,2),alert:0,dead:false};
+   if(dist(g,player)<180){i--;continue}
+   guards.push(g);
+ }
+ for(let i=0;i<4;i++) loot.push({x:rnd(60,W-60),y:rnd(130,H-70),r:8,taken:false});
+ updateUI();
+}
+function updateUI(){
+ document.getElementById('level').textContent=level;
+ document.getElementById('score').textContent=score;
+ document.getElementById('coins').textContent=coins;
+ document.getElementById('hpText').textContent=Math.max(0,Math.ceil(hp));
+ document.getElementById('hpbar').style.width=Math.max(0,hp)+'%';
+}
+function circleRect(p,r,rec){
+ const x=Math.max(rec.x,Math.min(p.x,rec.x+rec.w)),y=Math.max(rec.y,Math.min(p.y,rec.y+rec.h));
+ return Math.hypot(p.x-x,p.y-y)<r;
+}
+function blocked(p,r){
+ if(p.x<r||p.y<90||p.x>W-r||p.y>H-r)return true;
+ return walls.some(w=>circleRect(p,r,w));
+}
+function moveEntity(e,dx,dy){
+ let nx=e.x+dx,ny=e.y+dy;
+ if(!blocked({x:nx,y:e.y},e.r))e.x=nx;
+ if(!blocked({x:e.x,y:ny},e.r))e.y=ny;
+}
+function lineBlocked(a,b){
+ for(const w of walls){
+  const steps=Math.ceil(dist(a,b)/10);
+  for(let i=1;i<steps;i++){const t=i/steps,p={x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t};if(p.x>w.x&&p.x<w.x+w.w&&p.y>w.y&&p.y<w.y+w.h)return true}
+ }
+ return false;
+}
+function emit(x,y,n=8){
+ for(let i=0;i<n;i++)particles.push({x,y,vx:rnd(-80,80),vy:rnd(-80,80),life:rnd(.25,.6)});
+}
+function killGuard(g){
+ g.dead=true;score+=100*level;emit(g.x,g.y,18);
+ if(Math.random()<.45){coins++;loot.push({x:g.x,y:g.y,r:8,taken:false})}
+}
+function update(dt){
+ if(!running)return;
+ flash=Math.max(0,flash-dt);
+ // input
+ let dx=(keys.d||keys.arrowright?1:0)-(keys.a||keys.arrowleft?1:0);
+ let dy=(keys.s||keys.arrowdown?1:0)-(keys.w||keys.arrowup?1:0);
+ const l=Math.hypot(dx,dy)||1; dx/=l;dy/=l;
+ if(keys.shift&&player.dash<=0&& (dx||dy)){player.dash=.65;player.inv=.35;emit(player.x,player.y,10)}
+ const sp=player.speed*(player.dash>0?3.1:1);
+ if(dx||dy){moveEntity(player,dx*sp*dt,dy*sp*dt);player.angle=Math.atan2(dy,dx)}
+ player.dash=Math.max(0,player.dash-dt);player.inv=Math.max(0,player.inv-dt);
+ // loot
+ loot.forEach(q=>{if(!q.taken&&dist(player,q)<28){q.taken=true;coins++;score+=25;emit(q.x,q.y,8)}});
+ // guards
+ for(const g of guards){
+  if(g.dead)continue;
+  const d=dist(g,player), sees=d<185 && !lineBlocked(g,player);
+  if(sees)g.alert=Math.min(1,g.alert+dt*2.5); else g.alert=Math.max(0,g.alert-dt*.7);
+  if(g.alert>.6){g.dir=Math.atan2(player.y-g.y,player.x-g.x);g.speed=72+level*6}
+  else {g.turn-=dt;if(g.turn<0){g.turn=rnd(.6,1.8);g.dir+=rnd(-1.5,1.5)}}
+  moveEntity(g,Math.cos(g.dir)*g.speed*dt,Math.sin(g.dir)*g.speed*dt);
+  // stealth takedown from behind / close
+  if(d<34 && !sees && !g.dead){killGuard(g)}
+  if(d<24 && sees && player.inv<=0){hp-=35;player.inv=.8;flash=.15;emit(player.x,player.y,10)}
+ }
+ guards=guards.filter(g=>!g.dead);
+ if(hp<=0){running=false;showEnd(false);return}
+ if(guards.length===0){score+=500*level;level++;resetLevel();running=true}
+ for(const p of particles){p.x+=p.vx*dt;p.y+=p.vy*dt;p.vx*=.94;p.vy*=.94;p.life-=dt}
+ particles=particles.filter(p=>p.life>0);
+ updateUI();
+}
+function draw(){
+ ctx.clearRect(0,0,W,H);
+ // arena
+ ctx.fillStyle='#0b1014';ctx.fillRect(0,0,W,H);
+ ctx.strokeStyle='#152028';ctx.lineWidth=1;
+ for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,90);ctx.lineTo(x,H);ctx.stroke()}
+ for(let y=90;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+ // walls
+ walls.forEach(w=>{ctx.fillStyle='#202b33';ctx.fillRect(w.x,w.y,w.w,w.h);ctx.strokeStyle='#3a4851';ctx.strokeRect(w.x,w.y,w.w,w.h)});
+ // loot
+ loot.forEach(q=>{if(q.taken)return;ctx.save();ctx.translate(q.x,q.y);ctx.rotate(Math.PI/4);ctx.fillStyle='#d7ff4f';ctx.fillRect(-7,-7,14,14);ctx.restore()});
+ // guards + vision
+ guards.forEach(g=>{
+  ctx.save();ctx.translate(g.x,g.y);
+  ctx.fillStyle=g.alert>.6?'#ff4d4d':'#ff8c55';ctx.globalAlpha=.12;
+  ctx.beginPath();ctx.moveTo(0,0);ctx.arc(0,0,185,g.dir-.48,g.dir+.48);ctx.closePath();ctx.fill();ctx.globalAlpha=1;
+  ctx.fillStyle='#b84b3f';ctx.beginPath();ctx.arc(0,0,g.r,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#160d0c';ctx.beginPath();ctx.arc(Math.cos(g.dir)*5,Math.sin(g.dir)*5,4,0,Math.PI*2);ctx.fill();ctx.restore();
+ });
+ // player
+ if(player){
+  ctx.save();ctx.translate(player.x,player.y);ctx.rotate(player.angle);
+  ctx.globalAlpha=player.inv>0?.55:1;ctx.fillStyle='#d7ff4f';ctx.beginPath();ctx.arc(0,0,player.r,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#111';ctx.beginPath();ctx.moveTo(17,0);ctx.lineTo(5,-6);ctx.lineTo(5,6);ctx.closePath();ctx.fill();ctx.restore();
+ }
+ particles.forEach(p=>{ctx.globalAlpha=Math.max(0,p.life*2);ctx.fillStyle='#d7ff4f';ctx.fillRect(p.x-2,p.y-2,4,4);ctx.globalAlpha=1});
+ if(flash){ctx.fillStyle='#f44';ctx.globalAlpha=flash*2;ctx.fillRect(0,0,W,H);ctx.globalAlpha=1}
+}
+function loop(t){const dt=Math.min(.033,(t-last)/1000||0);last=t;update(dt);draw();requestAnimationFrame(loop)}
+requestAnimationFrame(loop);
+
+function showEnd(win){
+ const ov=document.getElementById('overlay');ov.style.display='flex';
+ ov.querySelector('.panel').innerHTML=`<h1>${win?'MISSION CLEAR':'MISSION FAILED'}</h1><p>Score: <b>${score}</b><br>Koin: <b>${coins}</b><br>Level: <b>${level}</b></p><button id="restart">MAIN LAGI</button>`;
+ document.getElementById('restart').onclick=()=>{score=0;coins=0;level=1;resetLevel();running=true;ov.style.display='none'}
+}
+document.getElementById('start').onclick=()=>{resetLevel();running=true;document.getElementById('overlay').style.display='none'};
+
+// Touch controls
+const bind=(id,key)=>{const e=document.getElementById(id);['pointerdown','pointerup','pointercancel','pointerleave'].forEach(ev=>e.addEventListener(ev,x=>{x.preventDefault();keys[key]=ev==='pointerdown'}))};
+bind('up','arrowup');bind('down','arrowdown');bind('left','arrowleft');bind('right','arrowright');
+</script>
+</body></html>
